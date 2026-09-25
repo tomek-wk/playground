@@ -13,6 +13,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <iostream>
 #include <limits>
 #include <random>
@@ -278,6 +279,11 @@ void drawHud(int width, int height) {
     ImDrawList* draw = ImGui::GetForegroundDrawList();
     const ImVec2 center(width * 0.5f, height * 0.5f);
     const ImU32 white = IM_COL32(255, 255, 255, 255);
+
+    char fpsText[32];
+    std::snprintf(fpsText, sizeof(fpsText), "FPS: %.1f", ImGui::GetIO().Framerate);
+    draw->AddText(ImVec2(12.0f, 12.0f), white, fpsText);
+
     draw->AddLine(ImVec2(center.x - 7.0f, center.y), ImVec2(center.x + 7.0f, center.y), white, 2.0f);
     draw->AddLine(ImVec2(center.x, center.y - 7.0f), ImVec2(center.x, center.y + 7.0f), white, 2.0f);
 
