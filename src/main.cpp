@@ -10,22 +10,24 @@
 #include <backends/imgui_impl_opengl3.h>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <random>
+#include <tuple>
 #include <vector>
 
 namespace {
-constexpr int WORLD_SIZE = 100;
 constexpr float MAX_REACH = 5.0f;
 constexpr float MOVE_SPEED = 10.0f;
 constexpr float MOUSE_SENSITIVITY = 0.09f;
 
-std::array<std::uint8_t, WORLD_SIZE * WORLD_SIZE * WORLD_SIZE> gWorld{};
+using VoxelKey = std::tuple<int, int, int>;
+std::map<VoxelKey, std::uint8_t> gWorld;
+
 int gSelectedBlock = 1;
 float gYaw = -90.0f;
 float gPitch = 0.0f;
@@ -46,13 +48,22 @@ struct RayHit {
     glm::ivec3 normal{0};
 };
 
-int worldIndex(int x, int y, int z) {
-    return x + WORLD_SIZE * (y + WORLD_SIZE * z);
+VoxelKey voxelKey(const glm::ivec3& p) {
+    return {p.x, p.y, p.z};
 }
 
-bool inBounds(const glm::ivec3& p) {
-    return p.x >= 0 && p.y >= 0 && p.z >= 0 &&
-           p.x < WORLD_SIZE && p.y < WORLD_SIZE && p.z < WORLD_SIZE;
+std::uint8_t getVoxel(const glm::ivec3& p) {
+    const auto it = gWorld.find(voxelKey(p));
+    return it == gWorld.end() ? 0 : it->second;
+}
+
+void setVoxel(const glm::ivec3& p, std::uint8_t type) {
+    const VoxelKey key = voxelKey(p);
+    if (type == 0) {
+        gWorld.erase(key);
+    } else {
+        gWorld[key] = type;
+    }
 }
 
 glm::vec3 cameraForward() {
@@ -178,29 +189,23 @@ void main() {
 }
 
 void fillWorld() {
+    gWorld.clear();
     std::mt19937 rng(std::random_device{}());
     std::uniform_int_distribution<int> color(1, 3);
-    for (auto& voxel : gWorld) {
-        voxel = static_cast<std::uint8_t>(color(rng));
-    }
+    setVoxel(glm::ivec3(0, 0, 0), static_cast<std::uint8_t>(color(rng)));
 }
 
 void rebuildInstanceBuffer(GLuint instanceVbo, std::vector<Instance>& instances) {
     instances.clear();
     instances.reserve(gWorld.size());
 
-    for (int z = 0; z < WORLD_SIZE; ++z) {
-        for (int y = 0; y < WORLD_SIZE; ++y) {
-            for (int x = 0; x < WORLD_SIZE; ++x) {
-                const std::uint8_t type = gWorld[worldIndex(x, y, z)];
-                if (type == 0) continue;
-                instances.push_back(Instance{
-                    static_cast<float>(x),
-                    static_cast<float>(y),
-                    static_cast<float>(z),
-                    static_cast<std::uint32_t>(type)});
-            }
-        }
+    for (const auto& [key, type] : gWorld) {
+        const auto [x, y, z] = key;
+        instances.push_back(Instance{
+            static_cast<float>(x),
+            static_cast<float>(y),
+            static_cast<float>(z),
+            static_cast<std::uint32_t>(type)});
     }
 
     glBindBuffer(GL_ARRAY_BUFFER, instanceVbo);
@@ -247,7 +252,7 @@ RayHit raycast(const glm::vec3& origin, glm::vec3 direction, float maxDistance) 
     glm::ivec3 enterNormal(0);
 
     while (t <= maxDistance) {
-        if (inBounds(cell) && gWorld[worldIndex(cell.x, cell.y, cell.z)] != 0) {
+        if (getVoxel(cell) != 0) {
             return RayHit{true, cell, enterNormal};
         }
 
@@ -378,17 +383,11 @@ int main() {
     }
 
     const float cubeVertices[] = {
-        // +Z
         0,0,1,  0,0,1,   1,0,1,  0,0,1,   1,1,1,  0,0,1,   0,1,1,  0,0,1,
-        // -Z
         1,0,0,  0,0,-1,  0,0,0,  0,0,-1,  0,1,0,  0,0,-1,  1,1,0,  0,0,-1,
-        // -X
         0,0,0, -1,0,0,   0,0,1, -1,0,0,   0,1,1, -1,0,0,   0,1,0, -1,0,0,
-        // +X
         1,0,1,  1,0,0,   1,0,0,  1,0,0,   1,1,0,  1,0,0,   1,1,1,  1,0,0,
-        // +Y
         0,1,1,  0,1,0,   1,1,1,  0,1,0,   1,1,0,  0,1,0,   0,1,0,  0,1,0,
-        // -Y
         0,0,0,  0,-1,0,  1,0,0,  0,-1,0,  1,0,1,  0,-1,0,  0,0,1,  0,-1,0,
     };
 
@@ -439,7 +438,7 @@ int main() {
     glCullFace(GL_BACK);
     glFrontFace(GL_CCW);
 
-    glm::vec3 cameraPos(50.0f, 50.0f, 104.0f);
+    glm::vec3 cameraPos(0.5f, 0.5f, 5.0f);
     double previousTime = glfwGetTime();
     bool previousLmb = false;
     bool previousRmb = false;
@@ -477,12 +476,12 @@ int main() {
             bool changed = false;
 
             if (hit.hit && lmb && !previousLmb) {
-                gWorld[worldIndex(hit.cell.x, hit.cell.y, hit.cell.z)] = 0;
+                setVoxel(hit.cell, 0);
                 changed = true;
             } else if (hit.hit && rmb && !previousRmb) {
                 const glm::ivec3 target = hit.cell + hit.normal;
-                if (inBounds(target) && gWorld[worldIndex(target.x, target.y, target.z)] == 0) {
-                    gWorld[worldIndex(target.x, target.y, target.z)] = static_cast<std::uint8_t>(gSelectedBlock);
+                if (getVoxel(target) == 0) {
+                    setVoxel(target, static_cast<std::uint8_t>(gSelectedBlock));
                     changed = true;
                 }
             }
@@ -502,7 +501,7 @@ int main() {
             glm::radians(70.0f),
             static_cast<float>(fbWidth) / static_cast<float>(fbHeight),
             0.05f,
-            300.0f);
+            10000.0f);
         const glm::mat4 view = glm::lookAt(cameraPos, cameraPos + forward, glm::vec3(0.0f, 1.0f, 0.0f));
         const glm::mat4 viewProj = projection * view;
 
